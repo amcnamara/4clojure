@@ -100,8 +100,8 @@
         (with-user [{:keys [_id following]}]
           (if (not= _id user-id)
             (if (some #{user-id} following)
-              (form-to [:post (str "/user/" username)] (hidden-field :action "unfollow") [:button.user-follow-button {:type "submit"} "Unfollow"])
-              (form-to [:post (str "/user/" username)] (hidden-field :action "follow"  ) [:button.user-follow-button {:type "submit"} "Follow"]))
+              (form-to [:post (str "/user/unfollow/" username)] [:button.user-follow-button {:type "submit"} "Unfollow"])
+              (form-to [:post (str "/user/follow/"   username)] [:button.user-follow-button {:type "submit"} "Follow"]))
             [:div {:style "clear: right; margin-bottom: 10px;"} "&nbsp;"]))
         [:div {:style "clear: right; margin-bottom: 10px;"} "&nbsp;"])
       [:hr]
@@ -123,15 +123,21 @@
          (count (get-solved username)) "/"
          (count (get-problems))]]])}))
 
-(defn follow-user [action username]
+(defn follow-user [username]
   (with-user [{:keys [_id]}]
     (let [follow-id (:_id (get-user username))]
       (update! :users
                {:_id _id}
-               (if (= action "follow")
-                 {:$addToSet {:following follow-id}}
-                 {:$pull     {:following follow-id}}))))
-  (user-profile username))
+               {:$addToSet {:following follow-id}})))
+  (response/redirect (str "/user/" username)))
+
+(defn unfollow-user [username]
+  (with-user [{:keys [_id]}]
+    (let [follow-id (:_id (get-user username))]
+      (update! :users
+               {:_id _id}
+               {:$pull {:following follow-id}})))
+  (response/redirect (str "/user/" username)))
 
 (defn set-disable-codebox [disable-flag]
   (with-user [{:keys [_id]}]
@@ -143,4 +149,5 @@
 (defroutes users-routes
   (GET  "/users" [] (users-page))
   (GET  "/user/:username" [username] (user-profile username))
-  (POST "/user/:username" [action username] (follow-user action username)))
+  (POST "/user/follow/:username" [username] (follow-user username))
+  (POST "/user/unfollow/:username" [username] (unfollow-user username)))
