@@ -38,7 +38,7 @@
 
 (defn get-top-100-and-current-user [username]
   (let [ranked-users      (get-ranked-users)
-        this-user         (first (filter #(-> % :user #{username})
+        this-user         (first (filter (comp #{username} :user)
                                          ranked-users))
         this-user-ranking (update-in this-user [:rank] #(str (or % "?") " out of " (count ranked-users)))]           
     {:user-ranking this-user-ranking
