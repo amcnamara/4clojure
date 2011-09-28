@@ -45,12 +45,12 @@ function configureDataTables(){
         "iDisplayLength": 25,
         "aaSorting": [[5, "desc"], [1, "asc"], [4, "desc"]],
         "aoColumns": [
-            {"sType" : "string"},
-            {"sType" : "difficulty"},
-            {"sType" : "string"},
-            {"sType" : "string"},
-            {"sType" : "numeric"},
-            {"sType" : "string"}
+            {"sType": "string"},
+            {"sType": "difficulty"},
+            {"sType": "string"},
+            {"sType": "string"},
+            {"sType": "numeric"},
+            {"sType": "string"}
         ]
     } );
 

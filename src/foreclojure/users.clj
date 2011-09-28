@@ -34,7 +34,7 @@
              (map second
                   (sort-by (comp - first)
                            (group-by (comp count :solved)
-                                     (filter #(-> % :solved coll?)
+                                     (filter (comp coll? :solved)
                                              users))))))))
 
 (defn get-top-100-and-current-user [username]
