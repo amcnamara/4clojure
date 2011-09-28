@@ -1,7 +1,7 @@
 (ns foreclojure.users
   (:require [ring.util.response       :as response]
             [sandbar.stateful-session :as session])
-  (:use     [foreclojure.utils        :only [from-mongo row-class get-user with-user]]
+  (:use     [foreclojure.utils        :only [from-mongo row-class rank-class get-user with-user]]
             [foreclojure.template     :only [def-page content-page]]
             [foreclojure.config       :only [config repo-url]]
             [somnium.congomongo       :only [fetch-one fetch update!]]
@@ -19,35 +19,32 @@
               :where {:user name}
               :only [:_id])))
 
-(def sort-by-solved-and-date (juxt (comp count :solved) :last-login))
-
-(defn users-sort [users]
-  (reverse (sort-by sort-by-solved-and-date users)))
-
 (defn get-users []
-  (let [users (from-mongo
-               (fetch :users
-                      :only [:user :solved :contributor]))
-        sortfn (comp - count :solved)]
-    (sort-by sortfn users)))
+  (from-mongo
+   (fetch :users
+          :only [:user :solved :contributor])))
 
-(defn get-user-with-ranking [username, users]
-  (when username
-    (let [total (count users)
-          users-with-rankings (map-indexed
-                               (fn [idx itm]
-                                 (assoc itm :rank
-                                        (str (inc idx) " out of " total)))
-                               users)]
-      (first
-       (filter #(= username (% :user)) users-with-rankings)))))
+(defn get-ranked-users []
+  (let [users (get-users)]
+    (reduce into []
+            (map-indexed
+             (fn [rank tied-users]
+               (for [user (sort-by :user tied-users)]
+                 (assoc user :rank (inc rank))))
+             (map second
+                  (sort-by (comp - first)
+                           (group-by (comp count :solved)
+                                     (filter #(-> % :solved coll?)
+                                             users))))))))
 
 (defn get-top-100-and-current-user [username]
-  (let [users (get-users)
-        user-ranking (get-user-with-ranking username users)]
-    {:user-ranking user-ranking
-     :top-100 (take 100 users)}))
-
+  (let [ranked-users      (get-ranked-users)
+        this-user         (first (filter (fn [{:keys [user]}]
+                                           (= username user))
+                                         ranked-users))
+        this-user-ranking (assoc this-user :rank (str (:rank this-user "?") " out of " (count ranked-users)))]           
+    {:user-ranking this-user-ranking
+     :top-100 (take 100 ranked-users)}))
 
 (defn golfer? [user]
   (some user golfer-tags))
@@ -86,9 +83,9 @@
       [:th {:style "width: 40px;"} "Rank"]
       [:th "Username"]
       [:th "Problems Solved"]]]
-    (map-indexed (fn [rownum {:keys [user contributor solved]}]
+    (map-indexed (fn [rownum {:keys [rank user contributor solved]}]
                    [:tr (row-class rownum)
-                    [:td (inc rownum)]
+                    [:td (rank-class rank) rank]
                     [:td
                      (when contributor [:span.contributor "* "])
                      [:a.user-profile-link {:href (str "/user/" user)} user]]
@@ -101,7 +98,7 @@
    (content-page
     {:heading "All 4Clojure Users"
      :sub-heading (list [:span.contributor "*"] "&nbsp;" (link-to repo-url "4clojure contributor"))
-     :main (generate-user-list (get-users))})})
+     :main (generate-user-list (get-ranked-users))})})
 
 (def-page top-users-page []
   (let [username (session/session-get :user) 
