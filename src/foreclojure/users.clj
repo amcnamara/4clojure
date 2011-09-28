@@ -26,23 +26,21 @@
 
 (defn get-ranked-users []
   (let [users (get-users)]
-    (reduce into []
-            (map-indexed
-             (fn [rank tied-users]
-               (for [user (sort-by :user tied-users)]
-                 (assoc user :rank (inc rank))))
-             (map second
-                  (sort-by (comp - first)
-                           (group-by (comp count :solved)
-                                     (filter (comp coll? :solved)
-                                             users))))))))
+    (mapcat
+     (fn [rank tied-users]
+       (for [user (sort-by :user tied-users)]
+         (assoc user :rank (inc rank))))
+     (range)
+     (map second
+          (sort-by #(-> % first -)
+                   (group-by #(count (or (:solved %) []))
+                             users))))))
 
 (defn get-top-100-and-current-user [username]
   (let [ranked-users      (get-ranked-users)
-        this-user         (first (filter (fn [{:keys [user]}]
-                                           (= username user))
+        this-user         (first (filter #(-> % :user #{username})
                                          ranked-users))
-        this-user-ranking (assoc this-user :rank (str (:rank this-user "?") " out of " (count ranked-users)))]           
+        this-user-ranking (update-in this-user [:rank] #(str (or % "?") " out of " (count ranked-users)))]           
     {:user-ranking this-user-ranking
      :top-100 (take 100 ranked-users)}))
 
