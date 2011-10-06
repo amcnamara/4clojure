@@ -2,9 +2,11 @@
   (:require [foreclojure.users        :as      users]
             [sandbar.stateful-session :as      session]
             [clojure.string           :as      s]
-            [ring.util.response       :as      response])
+            [ring.util.response       :as      response]
+            [cheshire.core            :as      json])
   (:import  [org.apache.commons.mail  EmailException])
-  (:use     [foreclojure.utils        :only    [from-mongo get-user get-solved login-link *url* flash-msg flash-error row-class approver? can-submit? send-email image-builder with-user as-int maybe-update]]
+  (:use     [foreclojure.utils        :only    [from-mongo get-user get-solved login-link flash-msg flash-error row-class approver? can-submit? send-email image-builder with-user as-int maybe-update escape-html]]
+            [foreclojure.ring-utils   :only    [*url*]]
             [foreclojure.template     :only    [def-page content-page]]
             [foreclojure.social       :only    [tweet-link gist!]]
             [foreclojure.feeds        :only    [create-feed]]
@@ -18,8 +20,7 @@
             [hiccup.core              :only    [html]]
             [useful.debug             :only    [?]]
             [amalloy.utils            :only    [defcomp]]
-            [compojure.core           :only    [defroutes GET POST]]
-            [clojure.contrib.json     :only    [json-str]]))
+            [compojure.core           :only    [defroutes GET POST]]))
 
 (def solved-stats (agent {:total 0}))
 
@@ -212,7 +213,7 @@ Return a map, {:message, :error, :url, :num-tests-passed}."
 (let [light-img (image-builder {:red   ["red"   "test failed"]
                                 :green ["green" "test passed"]
                                 :blue  ["blue"  "test not run"]}
-                               :src #(str "/images/" % "light.png"))]
+                               :src #(str "images/" % "light.png"))]
   (defn render-test-cases [tests]
     [:table {:class "testcases"}
      (let [fail (session/flash-get :failing-test)]
@@ -248,11 +249,11 @@ Return a map, {:message, :error, :url, :num-tests-passed}."
 
 (defn rest-run-code [id raw-code]
   (let [{:keys [message error url num-tests-passed]} (run-code id raw-code)]
-    (json-str {:failingTest num-tests-passed
-               :message message
-               :error error
-               :golfScore (html (render-golf-score))
-               :golfChart (html (render-golf-chart))})))
+    (json/generate-string {:failingTest num-tests-passed
+                           :message message
+                           :error error
+                           :golfScore (html (render-golf-score))
+                           :golfChart (html (render-golf-chart))})))
 
 (defn wants-no-javascript-codebox? []
   (when (session/session-get :user)
@@ -308,10 +309,11 @@ Return a map, {:message, :error, :url, :num-tests-passed}."
        (when (wants-no-javascript-codebox?) [:span#disable-javascript-codebox])
         (text-area {:id "code-box"
                     :spellcheck "false"}
-                   :code (or (session/flash-get :code)
-                             (-> (session/session-get :user)
-                                 (get-user-id)
-                                 (get-solution ,,, _id))))
+                   :code (escape-html
+                          (or (session/flash-get :code)
+                              (-> (session/session-get :user)
+                                  (get-user-id)
+                                  (get-solution ,,, _id)))))
         [:div#golfgraph
          (render-golf-chart)]
         (hidden-field :id id)
@@ -342,7 +344,7 @@ Return a map, {:message, :error, :url, :num-tests-passed}."
     (with-user [{:keys [_id following]}]
       (list
        (let [user-code (get-solution :public _id problem-id)]
-         [:pre.solution-code.solution-user-code user-code])
+         [:pre.solution-code.solution-user-code (escape-html user-code)])
        (if (empty? following)
          [:p "You can only see solutions of users whom you follow.  Click on any name from the " (link-to "/users" "users") " listing page to see their profile, and click follow from there."]
          (if (some (complement nil?) (map #(get-solution :public % problem-id) following))
@@ -357,7 +359,7 @@ Return a map, {:message, :error, :url, :num-tests-passed}."
                             :when f-code]
                         [:div.follower-solution
                          [:div.solution-username (str f-user "'s solution:")]
-                         [:pre.solution-code f-code]]))
+                         [:pre.solution-code (escape-html f-code)]]))
            [:p "None of the users you follow have solved this problem yet!"])))))})
 
 (defn show-solutions [id]
@@ -373,8 +375,8 @@ Return a map, {:message, :error, :url, :num-tests-passed}."
         (session/session-put! :login-to *url*)
         (flash-error "/login" "You must log in to see solutions!")))))
 
-(let [checkbox-img (image-builder {true ["/images/checkmark.png" "completed"]
-                                   false ["/images/empty-sq.png" "incomplete"]})]
+(let [checkbox-img (image-builder {true ["images/checkmark.png" "completed"]
+                                   false ["images/empty-sq.png" "incomplete"]})]
   (def-page problem-list-page []
     {:title "4clojure - Problem Listing"
      :content
@@ -578,6 +580,7 @@ Return a map, {:message, :error, :url, :num-tests-passed}."
 
 (defroutes problems-routes
   (GET "/problems" [] (problem-list-page))
+  (GET "/problems/solved" [] (:total @solved-stats))
   (GET "/problem/:id" [id]
     (if-let [id-int (as-int id)]
       (problem-page id-int)

@@ -1,14 +1,19 @@
 (ns foreclojure.users
   (:require [ring.util.response       :as response]
-            [sandbar.stateful-session :as session])
+            [clojure.string           :as string]
+            [sandbar.stateful-session :as session]
+            [cheshire.core            :as json])
   (:use     [foreclojure.utils        :only [from-mongo row-class rank-class get-user with-user]]
             [foreclojure.template     :only [def-page content-page]]
+            [foreclojure.ring-utils   :only [*http-scheme* static-url]]
             [foreclojure.config       :only [config repo-url]]
             [somnium.congomongo       :only [fetch-one fetch update!]]
             [compojure.core           :only [defroutes GET POST]]
             [hiccup.form-helpers      :only [form-to hidden-field]]
             [hiccup.page-helpers      :only [link-to]]
-            [clojure.contrib.json     :only [json-str]]))
+            [hiccup.core              :only [html]])
+  (:import org.apache.commons.codec.digest.DigestUtils
+           java.net.URLEncoder))
 
 (def golfer-tags (into [:contributor]
                        (when (:golfing-active config)
@@ -23,7 +28,7 @@
 (defn get-users []
   (from-mongo
    (fetch :users
-          :only [:user :solved :contributor])))
+          :only [:user :solved :contributor :email])))
 
 (defn get-ranked-users []
   (let [users (get-users)
@@ -66,6 +71,22 @@
   (link-to (str "mailto:" (email-address username))
            username))
 
+(let [canonical-email (comp string/trim string/lower-case)
+      md5 #(DigestUtils/md5Hex %)
+      as-url #(URLEncoder/encode (static-url %))
+      no-gravatar-url (as-url "images/no-gravatar.png")]
+  (defn gravatar-img [{:keys [email size class default] :or {size 24}}]
+    (let [hash (if email
+                 (md5 (canonical-email email))
+                 "0000000000000000")
+          url (str (name *http-scheme*) "://www.gravatar.com/avatar/"
+                   hash "?s=" size "&d=" (if default
+                                           (as-url default)
+                                           no-gravatar-url))]
+      [:img (conj {:src url, :alt "gravatar icon"
+                   :width size :height size}
+                  (when class {:class class}))])))
+
 (defn format-user-ranking [{:keys [rank user contributor solved]}]
   (when user
     [:div
@@ -88,29 +109,43 @@
                [:input.following {:type "checkbox" :checked following?}]
                [:span.following (when following? "yes")]))))
 
-(defn generate-user-list [user-set]
+(defn generate-user-list [user-set table-name]
   (let [[user-id following]
         (when (session/session-get :user)
           (with-user [{:keys [_id following]}]
             [_id (set following)]))]
     (list
      [:br]
-     [:table#user-table.my-table
+     [:table.my-table {:id table-name}
       [:thead
        [:tr
         [:th {:style "width: 40px;" } "Rank"]
         [:th {:style "width: 200px;"} "Username"]
         [:th {:style "width: 180px;"} "Problems Solved"]
         [:th "Following"]]]
-      (map-indexed (fn [rownum {:keys [_id position rank user contributor solved]}]
+      (map-indexed (fn [rownum {:keys [_id email position rank user contributor solved]}]
                      [:tr (row-class rownum)
                       [:td (rank-class position) rank]
                       [:td
-                       (when contributor [:span.contributor "* "])
-                       [:a.user-profile-link {:href (str "/user/" user)} user]]
+                       (gravatar-img {:email email :class "gravatar"})
+                       [:a.user-profile-link {:href (str "/user/" user)} user (when contributor [:span.contributor " *"])]]
                       [:td.centered (count solved)]
                       [:td (following-checkbox user-id following _id user)]])
                    user-set)])))
+
+(defn generate-datatable-users-list [user-set]
+  (let [[user-id following]
+        (when (session/session-get :user)
+          (with-user [{:keys [_id following]}]
+            [_id (set following)]))]
+    (into [] (map-indexed (fn [rownum {:keys [_id email position rank user contributor solved]}]
+                    [rank
+                     (str
+                      (html (gravatar-img {:email email :class "gravatar"}))
+                      (html [:a.user-profile-link {:href (str "/user/" user)} user (when contributor [:span.contributor " *"])]))
+                     (count solved)
+                     (html (following-checkbox user-id following _id user))])
+                          user-set))))
 
 (def-page all-users-page []
   {:title "All 4Clojure Users"
@@ -118,7 +153,7 @@
    (content-page
     {:heading "All 4Clojure Users"
      :sub-heading (list [:span.contributor "*"] "&nbsp;" (link-to repo-url "4clojure contributor"))
-     :main (generate-user-list (get-ranked-users))})})
+     :main (generate-user-list [] "server-user-table")})})
 
 (def-page top-users-page []
   (let [username (session/session-get :user)
@@ -127,11 +162,11 @@
      :content
      (content-page
       {:heading "Top 100 Users"
-       :heading-note (list "[show " (link-to "/users/all" "all") "]")
+       :heading-note [:span#all-users-link]
        :sub-heading (list (format-user-ranking user-ranking)
                           [:span.contributor "*"] "&nbsp;"
                           (link-to repo-url "4clojure contributor"))
-       :main (generate-user-list top-100)})}))
+       :main (generate-user-list top-100 "user-table")})}))
 
 ;; TODO: this is snagged from problems.clj but can't be imported due to cyclic dependency, must refactor this out.
 (defn get-problems
@@ -158,10 +193,13 @@
 
 (def-page user-profile [username]
   (let [page-title (str "User: " username)
-        user-id (:_id (get-user username))]
+        {user-id :_id email :email} (get-user username)]
     {:title page-title
      :content
      (list
+      [:div#profile-pic (gravatar-img {:email email, :size 80
+                                       :class "user-profile-img"
+                                       :default "images/gus-of-disapproval.png"})]
       [:div.user-profile-name page-title]
       (if (session/session-get :user)
         (with-user [{:keys [_id following]}]
@@ -206,9 +244,9 @@
 
 (defn rest-follow-user [username follow?]
   (follow-user username follow?)
-  (json-str {"following" follow?
-             "next-action" (follow-url username (not follow?))
-             "next-label" (if follow? "Unfollow" "Follow")}))
+  (json/generate-string {"following" follow?
+                         "next-action" (follow-url username (not follow?))
+                         "next-label" (if follow? "Unfollow" "Follow")}))
 
 (defn set-disable-codebox [disable-flag]
   (with-user [{:keys [_id]}]
@@ -223,6 +261,53 @@
              {:_id _id}
              {:$set {:hide-solutions (boolean hide-flag)}})
     (response/redirect "/problems")))
+
+(defn datatable-paging [users start length]
+  (take length (drop start users)))
+
+(defn datatable-sort-cols [users sort-col]
+  (case sort-col
+        0 (sort-by :rank users)
+        1 (sort-by :user users)
+        2 (sort-by (comp :solved count) users)
+        users))
+
+(defn datatable-sort-dir [users sort-dir]
+  (if (= sort-dir "asc")
+    users
+    (reverse users)))
+
+(defn datatable-sort [users sort-col sort-dir]
+  (-> users (datatable-sort-cols sort-col) (datatable-sort-dir sort-dir)))
+
+(defn datatable-filter [users str]
+  (if str
+    (filter #(< -1 (.indexOf (if (:user %) (:user %) "") str)) users)
+    users))
+
+(defn datatable-process [users params]
+  (let [display-start (Integer. (params :iDisplayStart))
+        display-length (Integer. (params :iDisplayLength))
+        sort-col (Integer. (params :iSortCol_0))
+        sort-dir (params :sSortDir_0)
+        search-str (params :sSearch)]
+    (-> users
+        (datatable-sort sort-col sort-dir)
+        (datatable-paging display-start display-length)
+        generate-datatable-users-list)))
+
+(defn user-datatable-query [params]
+  (let [
+        ranked-users (get-ranked-users)
+        search-str (params :sSearch)
+        filtered-users (datatable-filter ranked-users search-str)
+        page-users (datatable-process
+                    filtered-users
+                    params)]
+   {:sEcho (params :sEcho)
+    :iTotalRecords (str (count ranked-users))
+    :iTotalDisplayRecords (str (count filtered-users))
+    :aaData page-users}))
 
 (defroutes users-routes
   (GET  "/users" [] (top-users-page))

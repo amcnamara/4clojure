@@ -5,6 +5,8 @@
             [sandbar.stateful-session   :as   session])
   (:use     [compojure.core             :only [defroutes routes GET]]
             [foreclojure.static         :only [static-routes welcome-page]]
+            [foreclojure.api            :only [api-routes]]
+            [foreclojure.datatable      :only [datatable-routes]]
             [foreclojure.problems       :only [problems-routes]]
             [foreclojure.login          :only [login-routes]]
             [foreclojure.register       :only [register-routes]]
@@ -16,7 +18,7 @@
             [foreclojure.version        :only [version-routes]]
             [foreclojure.graphs         :only [graph-routes]]
             [foreclojure.mongo          :only [prepare-mongo]]
-            [foreclojure.utils          :only [wrap-uri-binding]]
+            [foreclojure.ring-utils     :only [wrap-request-bindings]]
             [foreclojure.periodic       :only [schedule-task]]
             [ring.adapter.jetty         :only [run-jetty]]
             [ring.middleware.reload     :only [wrap-reload]]
@@ -42,12 +44,14 @@
               social-routes
               version-routes
               graph-routes
+              api-routes
+              datatable-routes
               golf-routes)
       ((if (:wrap-reload config)
          #(wrap-reload % '(foreclojure.core))
          identity))
       session/wrap-stateful-session
-      wrap-uri-binding
+      wrap-request-bindings
       handler/site
       wrap-strip-trailing-slash))
 
