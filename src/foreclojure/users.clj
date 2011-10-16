@@ -3,7 +3,7 @@
             [clojure.string           :as string]
             [sandbar.stateful-session :as session]
             [cheshire.core            :as json])
-  (:use     [foreclojure.utils        :only [from-mongo row-class rank-class get-user with-user]]
+  (:use     [foreclojure.utils        :only [from-mongo row-class rank-class get-user if-user with-user]]
             [foreclojure.template     :only [def-page content-page]]
             [foreclojure.ring-utils   :only [*http-scheme* static-url]]
             [foreclojure.config       :only [config repo-url]]
@@ -103,17 +103,16 @@
   (str "/user/" (if follow? "follow" "unfollow") "/" username))
 
 (defn following-checkbox [current-user-id following user-id user]
-  (when (and current-user-id (not= current-user-id user-id))
+  (if (and current-user-id (not= current-user-id user-id))
     (let [following? (contains? following user-id)]
       (form-to [:post (follow-url user (not following?))]
                [:input.following {:type "checkbox" :checked following?}]
-               [:span.following (when following? "yes")]))))
+               [:span.following (when following? "yes")]))
+    [:span.following "me"]))
 
 (defn generate-user-list [user-set table-name]
-  (let [[user-id following]
-        (when (session/session-get :user)
-          (with-user [{:keys [_id following]}]
-            [_id (set following)]))]
+  (let [[user-id following] (if-user [{:keys [_id following]}]
+                              [_id (set following)])]
     (list
      [:br]
      [:table.my-table {:id table-name}
@@ -134,18 +133,18 @@
                    user-set)])))
 
 (defn generate-datatable-users-list [user-set]
-  (let [[user-id following]
-        (when (session/session-get :user)
-          (with-user [{:keys [_id following]}]
-            [_id (set following)]))]
-    (into [] (map-indexed (fn [rownum {:keys [_id email position rank user contributor solved]}]
-                    [rank
-                     (str
-                      (html (gravatar-img {:email email :class "gravatar"}))
-                      (html [:a.user-profile-link {:href (str "/user/" user)} user (when contributor [:span.contributor " *"])]))
-                     (count solved)
-                     (html (following-checkbox user-id following _id user))])
-                          user-set))))
+  (let [[user-id following] (if-user [{:keys [_id following]}]
+                              [_id (set following)])]
+    (map-indexed
+     (fn [rownum {:keys [_id email position rank user contributor solved]}]
+       [rank
+        (html (list
+               (gravatar-img {:email email :class "gravatar"})
+               [:a.user-profile-link {:href (str "/user/" user)}
+                user (when contributor [:span.contributor " *"])]))
+        (count solved)
+        (html (following-checkbox user-id following _id user))])
+     user-set)))
 
 (def-page all-users-page []
   {:title "All 4Clojure Users"
@@ -201,15 +200,14 @@
                                        :class "user-profile-img"
                                        :default "images/gus-of-disapproval.png"})]
       [:div.user-profile-name page-title]
-      (if (session/session-get :user)
-        (with-user [{:keys [_id following]}]
-          (if (not= _id user-id)
-            (let [[url label] (if (some #{user-id} following)
-                                ["unfollow" "Unfollow"]
-                                ["follow"   "Follow"])]
-              (form-to [:post (str "/user/" url "/" username)]
-                [:button.user-follow-button {:type "submit"} label]))
-            [:div {:style "clear: right; margin-bottom: 10px;"} "&nbsp;"]))
+      (if-user [{:keys [_id following]}]
+        (if (not= _id user-id)
+          (let [[url label] (if (some #{user-id} following)
+                              ["unfollow" "Unfollow"]
+                              ["follow"   "Follow"])]
+            (form-to [:post (str "/user/" url "/" username)]
+              [:button.user-follow-button {:type "submit"} label]))
+          [:div {:style "clear: right; margin-bottom: 10px;"} "&nbsp;"])
         [:div {:style "clear: right; margin-bottom: 10px;"} "&nbsp;"])
       [:hr]
       [:table
@@ -248,62 +246,46 @@
                          "next-action" (follow-url username (not follow?))
                          "next-label" (if follow? "Unfollow" "Follow")}))
 
-(defn set-disable-codebox [disable-flag]
-  (with-user [{:keys [_id]}]
-    (update! :users
-             {:_id _id}
-             {:$set {:disable-code-box (boolean disable-flag)}})
-    (response/redirect "/problems")))
-
-(defn set-hide-solutions [hide-flag]
-  (with-user [{:keys [_id]}]
-    (update! :users
-             {:_id _id}
-             {:$set {:hide-solutions (boolean hide-flag)}})
-    (response/redirect "/problems")))
-
-(defn datatable-paging [users start length]
+(defn datatable-paging [start length users]
   (take length (drop start users)))
 
-(defn datatable-sort-cols [users sort-col]
-  (case sort-col
-        0 (sort-by :rank users)
-        1 (sort-by :user users)
-        2 (sort-by (comp :solved count) users)
-        users))
+(let [column-sorts [:rank :user (comp count :solved)]]
+  (defn datatable-sort-cols [sort-col users]
+    (if-let [sort-fn (get column-sorts sort-col)]
+      (sort-by sort-fn users)
+      users)))
 
-(defn datatable-sort-dir [users sort-dir]
+(defn datatable-sort-dir [sort-dir users]
   (if (= sort-dir "asc")
     users
     (reverse users)))
 
-(defn datatable-sort [users sort-col sort-dir]
-  (-> users (datatable-sort-cols sort-col) (datatable-sort-dir sort-dir)))
+(defn datatable-sort [sort-col sort-dir users]
+  (->> users (datatable-sort-cols sort-col) (datatable-sort-dir sort-dir)))
 
-(defn datatable-filter [users str]
-  (if str
-    (filter #(< -1 (.indexOf (if (:user %) (:user %) "") str)) users)
+(defn datatable-filter [search users]
+  (if search
+    (filter #(.contains (:user % "") search) users)
     users))
 
-(defn datatable-process [users params]
+(defn datatable-process [params users]
   (let [display-start (Integer. (params :iDisplayStart))
         display-length (Integer. (params :iDisplayLength))
         sort-col (Integer. (params :iSortCol_0))
         sort-dir (params :sSortDir_0)
         search-str (params :sSearch)]
-    (-> users
+    (->> users
         (datatable-sort sort-col sort-dir)
         (datatable-paging display-start display-length)
         generate-datatable-users-list)))
 
 (defn user-datatable-query [params]
-  (let [
-        ranked-users (get-ranked-users)
+  (let [ranked-users (get-ranked-users)
         search-str (params :sSearch)
-        filtered-users (datatable-filter ranked-users search-str)
+        filtered-users (datatable-filter search-str ranked-users)
         page-users (datatable-process
-                    filtered-users
-                    params)]
+                    params
+                    filtered-users)]
    {:sEcho (params :sEcho)
     :iTotalRecords (str (count ranked-users))
     :iTotalDisplayRecords (str (count filtered-users))
