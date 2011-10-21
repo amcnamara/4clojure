@@ -1,9 +1,11 @@
 (ns foreclojure.ring
   (:require [clojure.java.io           :as   io]
             [clojure.string            :as   s]
-            [compojure.route           :as   route])
+            [compojure.route           :as   route]
+            [cheshire.core             :as   json])
   (:import  [java.net                  URL])
-  (:use     [compojure.core            :only [GET]]
+  (:use     [compojure.core            :only [GET routes]]
+            [hiccup.core               :only [html]]
             [foreclojure.version-utils :only [strip-version-number]]
             [foreclojure.ring-utils    :only [get-host]]
             [useful.debug              :only [?]]
@@ -39,9 +41,18 @@
       (assoc-in resp [:headers "Cache-control"]
                 "public, max-age=31536000"))))
 
-(defn wrap-debug [handler]
+(defn wrap-debug [handler label]
   (fn [request]
+    (println "In" label)
     (? (handler (? request)))))
+
+(let [content-type [:headers "Content-Type"]]
+  (defn wrap-json [handler]
+    (fn [request]
+      (when-let [resp (handler request)]
+        (-> resp
+            (assoc-in content-type "application/json")
+            (update-in [:body] json/generate-string))))))
 
 (defn split-hosts [host-handlers]
   (let [default (:default host-handlers)]
@@ -50,7 +61,15 @@
             handler (or (host-handlers host) default)]
         (handler request)))))
 
+(def render-404
+  (html
+   [:head
+    [:title "BrightSide"]]
+   [:body
+    [:div {:style "margin-left: auto; margin-right: auto; width: 300px;"}
+     [:p {:style "text-align: center; width: 100%; margin-top: 45px; font-family: helvetica; color: gray; font-size: 25px;"} "404 &mdash; Page not found."]
+     [:img {:style "margin-left: 18px;" :src "/images/4clj-gus-confused-small.png"}]]]))
+
 (defn wrap-404 [handler]
-  (fn [request]
-    (or (handler request)
-        (route/not-found "Page not found"))))
+  (routes handler
+          (route/not-found render-404)))

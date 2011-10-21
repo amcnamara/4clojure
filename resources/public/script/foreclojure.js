@@ -39,9 +39,11 @@ $(document).ready(function() {
       return false;
   });
 
-  $("#user-table").addClass("js-enabled");
+  $("#all-users-link").html("[show <a href=\"/users/all\">all</a>]");
 
-  $("#user-table input.following").live("click", function(e) {
+  $("#user-table,#server-user-table").addClass("js-enabled");
+
+  $("#user-table,#server-user-table input.following").live("click", function(e) {
     e.preventDefault();
     var $checkbox = $(this)
     var $form = $checkbox.parents("form")
@@ -57,6 +59,7 @@ $(document).ready(function() {
            });
     return false;
   });
+
 });
 
 var difficulty = {
@@ -92,6 +95,19 @@ jQuery.fn.dataTableExt.afnSortData['user-name'] = function(oSettings, iColumn)
     return aData;
 }
 
+// See comments for above function to make sense of this mess
+jQuery.fn.dataTableExt.afnSortData['following'] = function(oSettings, iColumn)
+{
+    var aData = [];
+    $('td:eq('+iColumn+') span.following', oSettings.oApi._fnGetTrNodes(oSettings)).each(function () {
+        var followingText = $(this).text();
+        if (!followingText || followingText == "") { followingText = "no" }
+	aData.push(followingText);
+    });
+    return aData;
+}
+
+
 function configureDataTables(){
 
     $('#problem-table').dataTable( {
@@ -125,9 +141,22 @@ function configureDataTables(){
             {"sType": "numeric"},
             {"sSortDataType": "user-name"},
             {"sType": "numeric"},
-            {"sType": "string"},
-	    {"sType": "string"}
+            {"sSortDataType": "following"}
         ]
+    } );
+
+    
+    $('#server-user-table').dataTable( {
+        "aoColumns": [
+            null,
+            null,
+            null,
+            {"bSortable": false}
+        ],
+        "iDisplayLength":100,
+        "bProcessing": true,
+        "bServerSide": true,
+        "sAjaxSource": "/datatable/users"
     } );
 }
 
